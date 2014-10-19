@@ -12,9 +12,12 @@ int process(char *x){
   if(x == NULL){
     return -1;
   }
-  if(strncmp(x, "<Slice>", 7) == 0){
+  if(x[0] != ';'){
+    return 0;
+  }
+  if(strncmp(x, ";<Slice>", 8) == 0){
     return 1;
-  }else if(strncmp(x, "<Delay>", 7) == 0){
+  }else if(strncmp(x, ";<Delay>", 8) == 0){
     return 2;
   }
   c=0;
@@ -30,7 +33,8 @@ int process(char *x){
 void delayCmd(char *cmd){
   char *arg;
   int i;
-  arg = trim(&(cmd[7]));
+  arg = trim(&(cmd[8]));
+  trimcomment(arg);
   i = atoi(arg);
   printf("Delay %d\n", i);
   usleep(i * 1000);
@@ -40,7 +44,8 @@ void sliceCmd(SliceMngr *sm, char *base, char *cmd){
   char *arg;
   char pngname[255];
   int i;
-  arg = trim(&(cmd[7]));
+  arg = trim(&(cmd[8]));
+  trimcomment(arg);
   if(strcmp("Blank", arg) == 0){
     sm->blankScreen();
     printf("Blank Screen\n");
@@ -105,10 +110,11 @@ int main(int argc, char **argv){
 
   sm = new SliceMngr();
   while(fgets(cmd, 255, fp) != NULL){
-    trimComment(cmd);
+    //trimComment(cmd);
     tmp = trim(cmd);
     switch(process(tmp)){
     case 0:
+      trimcomment(tmp);
       sprintf(wrcmd, "%s\r\n", tmp);
       if(write(mt, tmp, strlen(wrcmd))!=strlen(wrcmd)){
 	printf("write did not complete\n");
