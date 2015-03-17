@@ -1,4 +1,4 @@
-OBJS=littlerp.o backgroundLayer.o imageLayer.o loadpng.o image.o key.o SliceMngr.o GCodeUtil.o 
+OBJS=littlerp.o backgroundLayer.o imageLayer.o loadpng.o image.o key.o SliceMngr.o GCodeUtil.o dirmngr.o i2cbusses.o lcd.o lrc.o
 BIN=littlerp
 
 CFLAGS+=-Wall -g -O3 -I../common $(shell libpng-config --cflags)

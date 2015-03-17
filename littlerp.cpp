@@ -6,11 +6,17 @@
 #include <fcntl.h>
 #include "GCodeUtil.h"
 #include "SliceMngr.h"
+#include "lcd.h"
+#include "dirmngr.h"
+#include "lrc.h"
 
 int process(char *x){
   int c;
   if(x == NULL){
     return -1;
+  }
+  if(strncmp(x, "<Delay>", 7) == 0){ //HACK FOR NOW
+    return 2;
   }
   if(x[0] != ';'){
     return 0;
@@ -33,8 +39,12 @@ int process(char *x){
 void delayCmd(char *cmd){
   char *arg;
   int i;
-  arg = trim(&(cmd[8]));
-  trimcomment(arg);
+  if(cmd[0] == ';'){
+    arg = trim(&(cmd[8]));
+  }else{
+    arg = trim(&(cmd[7]));
+  }
+  trimComment(arg);
   i = atoi(arg);
   printf("Delay %d\n", i);
   usleep(i * 1000);
@@ -45,7 +55,7 @@ void sliceCmd(SliceMngr *sm, char *base, char *cmd){
   char pngname[255];
   int i;
   arg = trim(&(cmd[8]));
-  trimcomment(arg);
+  trimComment(arg);
   if(strcmp("Blank", arg) == 0){
     sm->blankScreen();
     printf("Blank Screen\n");
@@ -67,13 +77,27 @@ int main(int argc, char **argv){
   char base[255];
   char wrcmd[255];
   char *tmp;
+  lcd *l;
+  dirmngr *dm;
+  dentry slfile;
   struct termios orig;
   struct termios raw;
   SliceMngr *sm;
-  strcpybase(base,argv[1], '.');
-  fp = fopen(argv[1], "r");
+  l = new lcd(1);
+  dm = new dirmngr();
+  slfile = lrc_menu(l,dm);
 
-  mt = open(argv[2], O_RDWR);
+  if(slfile.valid == 1){
+    l->setColor(2);
+    printf("gcode: %s\n", slfile.path);
+  }else{
+    exit(1);
+  }
+  strcpy(slfile.path, "/models/huntress_final.slice/huntress_final.gcode");
+  strcpybase(base,slfile.path, '.');
+  fp = fopen(slfile.path, "r");
+
+  mt = open(argv[1], O_RDWR);
   if(!isatty(mt)){
     printf("not a tty\n");
     return -1;
@@ -114,12 +138,14 @@ int main(int argc, char **argv){
     tmp = trim(cmd);
     switch(process(tmp)){
     case 0:
-      trimcomment(tmp);
-      sprintf(wrcmd, "%s\r\n", tmp);
-      if(write(mt, tmp, strlen(wrcmd))!=strlen(wrcmd)){
-	printf("write did not complete\n");
+      if( trimComment(tmp) != 0){      
+	tmp = trim(tmp);
+	sprintf(wrcmd, "%s\r\n", tmp);
+	if(write(mt, wrcmd, strlen(wrcmd))!=strlen(wrcmd)){
+	  printf("write did not complete\n");
+	}
+	printf("Motor cmd: #%s#, %d\n", tmp, strlen(tmp));
       }
-      printf("Motor cmd: #%s#, %d\n", tmp, strlen(tmp));
       break;
     case 1:
       sliceCmd(sm, base, tmp);
