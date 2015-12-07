@@ -7,7 +7,7 @@
 #include <string.h>
 #include <vector>
 
-#define BASE_DIR "/models/"
+#define BASE_DIR "/mnt/"
 
 using namespace std;
 

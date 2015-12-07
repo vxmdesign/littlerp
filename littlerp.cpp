@@ -3,12 +3,14 @@
 #include <stdlib.h>
 #include <termios.h>
 #include <sys/types.h>
+#include <sys/mount.h>
 #include <fcntl.h>
 #include "GCodeUtil.h"
 #include "SliceMngr.h"
 #include "lcd.h"
 #include "dirmngr.h"
 #include "lrc.h"
+#include "UdevMonitor.h"
 
 int process(char *x){
   int c;
@@ -68,7 +70,32 @@ void sliceCmd(SliceMngr *sm, char *base, char *cmd){
   sm->sliceScreen();
 }
 
-
+int diskmount(lcd *l){
+  UdevMonitor *um;
+  int i;
+  deventry de;
+  um = new UdevMonitor();
+  l->clear();
+  if(um->getDiskDevicePoll(&de)!=1){
+    l->message_fixed("No device", 0);
+    l->setColor(0);
+    if(um->getDiskDevice(&de)!=1){
+      l->message_fixed("Failure", 0);
+      return -1;
+    }
+  }
+  l->message_fixed(de.name, 0);
+  l->message_fixed("Mount?", 1);
+  l->setColor(1);
+  i = l->get_button(-1);
+  printf("Selected %04x\n", i);
+  i = mount(de.device, "/mnt", "vfat", MS_NODEV | MS_NOEXEC, NULL);
+  if(i != 0){
+    printf("mount failed\n");
+  }
+  delete um;
+  return 0;
+}
 
 int main(int argc, char **argv){
   FILE *fp;
@@ -83,56 +110,64 @@ int main(int argc, char **argv){
   struct termios orig;
   struct termios raw;
   SliceMngr *sm;
+  sm = new SliceMngr();
+  sm->blankScreen();
   l = new lcd(1);
+  mt = diskmount(l);
+  if(mt !=0){
+    printf("Could not mount a disk\n");
+    return -1;
+  }
   dm = new dirmngr();
   slfile = lrc_menu(l,dm);
-
   if(slfile.valid == 1){
     l->setColor(2);
     printf("gcode: %s\n", slfile.path);
   }else{
     exit(1);
   }
-  strcpy(slfile.path, "/models/huntress_final.slice/huntress_final.gcode");
+  //strcpy(slfile.path, "/models/huntress_final.slice/huntress_final.gcode");
   strcpybase(base,slfile.path, '.');
   fp = fopen(slfile.path, "r");
-
-  mt = open(argv[1], O_RDWR);
-  if(!isatty(mt)){
-    printf("not a tty\n");
-    return -1;
+  if(argc == 2){
+    mt = open(argv[1], O_RDWR);
+    if(!isatty(mt)){
+      printf("not a tty\n");
+      return -1;
+    }
+    if(tcgetattr(mt, &orig) < 0){
+      printf("Could not get attr\n");
+      return -1;
+    }
+    raw = orig;
+    raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+    
+    /* output modes - clear giving: no post processing such as NL to CR+NL */
+    raw.c_oflag &= ~(OPOST);
+    
+    /* control modes - set 8 bit chars */
+    raw.c_cflag |= (CS8);
+    
+    /* local modes - clear giving: echoing off, canonical off (no erase with      
+       backspace, ^U,...),  no extended functions, no signal chars (^Z,^C) */
+    raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+    
+    /* control chars - set return condition: min number of bytes and timer */
+    raw.c_cc[VMIN] = 5; raw.c_cc[VTIME] = 8; /* after 5 bytes or .8 seconds       
+						after first byte seen      */
+    raw.c_cc[VMIN] = 0; raw.c_cc[VTIME] = 0; /* immediate - anything       */
+    raw.c_cc[VMIN] = 2; raw.c_cc[VTIME] = 0; /* after two bytes, no timer  */
+    raw.c_cc[VMIN] = 0; raw.c_cc[VTIME] = 8; /* after a byte or .8 seconds */
+    
+    cfsetspeed(&raw, B9600);
+    if(tcsetattr(mt, TCSAFLUSH, &raw) < 0){
+      printf("Could not set speed\n");
+      return -1;
+    }
+  }else{
+    mt = -1;
   }
-  if(tcgetattr(mt, &orig) < 0){
-    printf("Could not get attr\n");
-    return -1;
-  }
-  raw = orig;
-  raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
 
-  /* output modes - clear giving: no post processing such as NL to CR+NL */
-  raw.c_oflag &= ~(OPOST);
-
-  /* control modes - set 8 bit chars */
-  raw.c_cflag |= (CS8);
-
-  /* local modes - clear giving: echoing off, canonical off (no erase with      
-     backspace, ^U,...),  no extended functions, no signal chars (^Z,^C) */
-  raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
-
-  /* control chars - set return condition: min number of bytes and timer */
-  raw.c_cc[VMIN] = 5; raw.c_cc[VTIME] = 8; /* after 5 bytes or .8 seconds       
-                                              after first byte seen      */
-  raw.c_cc[VMIN] = 0; raw.c_cc[VTIME] = 0; /* immediate - anything       */
-  raw.c_cc[VMIN] = 2; raw.c_cc[VTIME] = 0; /* after two bytes, no timer  */
-  raw.c_cc[VMIN] = 0; raw.c_cc[VTIME] = 8; /* after a byte or .8 seconds */
-
-  cfsetspeed(&raw, B9600);
-  if(tcsetattr(mt, TCSAFLUSH, &raw) < 0){
-    printf("Could not set speed\n");
-    return -1;
-  }
-
-  sm = new SliceMngr();
   while(fgets(cmd, 255, fp) != NULL){
     //trimComment(cmd);
     tmp = trim(cmd);
@@ -141,8 +176,10 @@ int main(int argc, char **argv){
       if( trimComment(tmp) != 0){      
 	tmp = trim(tmp);
 	sprintf(wrcmd, "%s\r\n", tmp);
-	if(write(mt, wrcmd, strlen(wrcmd))!=strlen(wrcmd)){
-	  printf("write did not complete\n");
+	if(mt != -1){
+	  if(write(mt, wrcmd, strlen(wrcmd))!=strlen(wrcmd)){
+	    printf("write did not complete\n");
+	  }
 	}
 	printf("Motor cmd: #%s#, %d\n", tmp, strlen(tmp));
       }
